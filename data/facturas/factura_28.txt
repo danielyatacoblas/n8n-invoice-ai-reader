@@ -1,0 +1,17 @@
+IMPRESIONES RÁPIDAS S.A.C.
+RUC: 20609876540
+Av. Ficticia 456, Lima
+FACTURA ELECTRÓNICA
+F001-00001999
+Fecha de emisión: 09/09/2026
+Señor(es): COMERCIAL DEMO LIMA S.A.C.
+RUC: 20601234565
+Moneda: DÓLARES AMERICANOS
+Cant.  Descripción
+5  Disco SSD 1 TB  US$ 1,745.00
+2  Impresión de volantes x 1000  US$ 330.00
+2  Papel bond A4 x 500  US$ 37.00
+Op. Gravada: US$ 2,112.00
+IGV (18%): US$ 380.16
+Importe Total: US$ 2,492.16
+Representación impresa de la factura electrónica. Documento ficticio.

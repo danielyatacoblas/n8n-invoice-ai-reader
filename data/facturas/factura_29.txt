@@ -1,0 +1,14 @@
+JUAN PÉREZ QUISPE
+RUC: 10456789124
+Av. Ficticia 456, Lima
+FACTURA ELECTRÓNICA
+F002-00002036
+Fecha Emisión: 04/09/2026
+Señor(es): COMERCIAL DEMO LIMA S.A.C.
+RUC: 20601234565
+Moneda: SOLES
+Cant.  Descripción
+5  Cable UTP cat6 x 305 m  S/ 2,600.00
+Valor de venta: S/ 2,600.00
+IGV: S/ 468.00
+Representación impresa de la factura electrónica. Documento ficticio.

@@ -1,0 +1,17 @@
+JUAN PÉREZ QUISPE
+RUC: 10456789124
+Av. Ficticia 456, Lima
+FACTURA ELECTRÓNICA
+F002-00001592
+Fecha Emisión: 04/07/2026
+Señor(es): COMERCIAL DEMO LIMA S.A.C.
+RUC: 20601234565
+Moneda: SOLES
+Cant.  Descripción
+4  Disco SSD 1 TB  S/ 1,396.00
+2  Silla ergonómica  S/ 779.80
+3  Transporte de mercadería Lima-Trujillo  S/ 3,600.00
+Valor de venta: S/ 5,775.80
+IGV: S/ 1,039.64
+Total a pagar: S/ 6,815.44
+Representación impresa de la factura electrónica. Documento ficticio.
