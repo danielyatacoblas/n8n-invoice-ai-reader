@@ -1,0 +1,9 @@
+# LF en el repositorio y en el árbol de trabajo, en cualquier sistema
+# operativo. Sin esto, en Windows los .txt y .csv generados saldrían con CRLF
+# y la integración continua los vería como modificados.
+* text=auto eol=lf
+
+# Binarios: nunca tocar
+*.png binary
+*.mp4 binary
+*.pdf binary
