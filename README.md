@@ -34,6 +34,12 @@ flowchart TD
 
 ---
 
+## Arquitectura
+
+<p align="center"><img src="docs/arquitectura.png" alt="Arquitectura: entradas, pasos dentro de n8n y salidas" width="900"></p>
+
+---
+
 ## Demo
 
 <!-- VIDEO: arrastra aquí el .mp4 al editar el README en GitHub y deja solo la URL que genera. -->
@@ -74,6 +80,15 @@ Cada proveedor usa su propio sistema de facturación: uno escribe "Op. Gravada",
 Solo cuando al PDF le falta alguna etiqueta, el flujo le pasa el texto a un modelo de IA (nodo **Information Extractor** de n8n). Lo que devuelve la IA **pasa por las mismas validaciones**: si inventa un monto, el IGV o el total no cuadran y la factura va a revisión. Además, el prompt le prohíbe calcular datos que no aparecen.
 
 Si la IA falla o no hay saldo, la factura va a revisión con ese motivo. Nunca se registra una factura a medias.
+
+---
+
+## Pruebas
+
+<p align="center"><img src="docs/pruebas.png" alt="Resultados de las pruebas automáticas y de la verificación en n8n real" width="900"></p>
+
+La integración continua corre todos los tests en cada push. Lo de la columna
+derecha se verificó importando los workflows en n8n 2.40 con Docker.
 
 ---
 
