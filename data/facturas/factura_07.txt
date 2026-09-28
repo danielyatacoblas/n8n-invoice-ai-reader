@@ -1,0 +1,15 @@
+DISTRIBUIDORA ANDINA S.A.C.
+RUC: 20555666773
+Av. Ficticia 456, Lima
+FACTURA ELECTRÓNICA
+F001-00001222
+Fecha de emisión: 13/08/2026
+Señor(es): COMERCIAL DEMO LIMA S.A.C.
+RUC: 20601234565
+Moneda: SOLES
+Cant.  Descripción
+3  Transporte de mercadería Lima-Trujillo  S/ 3,600.00
+Op. Gravada: S/ 3,600.00
+IGV (18%): S/ 648.00
+Importe Total: S/ 4,248.00
+Representación impresa de la factura electrónica. Documento ficticio.

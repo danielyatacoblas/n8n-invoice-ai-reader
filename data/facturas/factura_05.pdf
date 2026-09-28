@@ -1,0 +1,49 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Length 809 >>
+stream
+BT /F1 10 Tf
+1 0 0 1 50 790 Tm (JUAN PÉREZ QUISPE) Tj
+1 0 0 1 50 774 Tm (RUC: 10456789124) Tj
+1 0 0 1 50 758 Tm (Av. Ficticia 456, Lima) Tj
+1 0 0 1 50 730 Tm (FACTURA ELECTRÓNICA) Tj
+1 0 0 1 50 714 Tm (F002-00001148) Tj
+1 0 0 1 50 686 Tm (Fecha Emisión: 06/09/2026) Tj
+1 0 0 1 50 670 Tm (Señor\(es\): COMERCIAL DEMO LIMA S.A.C.) Tj
+1 0 0 1 50 654 Tm (RUC: 20601234565) Tj
+1 0 0 1 50 638 Tm (Moneda: SOLES) Tj
+1 0 0 1 50 610 Tm (Cant.  Descripción) Tj
+1 0 0 1 50 594 Tm (1  Cable UTP cat6 x 305 m  S/ 520.00) Tj
+1 0 0 1 50 578 Tm (2  Impresión de volantes x 1000  S/ 330.00) Tj
+1 0 0 1 50 550 Tm (Valor de venta: S/ 850.00) Tj
+1 0 0 1 50 534 Tm (IGV: S/ 153.00) Tj
+1 0 0 1 50 518 Tm (Total a pagar: S/ 1,003.00) Tj
+1 0 0 1 50 490 Tm (Representación impresa de la factura electrónica. Documento ficticio.) Tj
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000338 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1198
+%%EOF
