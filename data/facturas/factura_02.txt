@@ -1,0 +1,15 @@
+SUMINISTROS DEL PACÍFICO E.I.R.L.
+RUC: 20488990013
+Av. Ficticia 456, Lima
+FACTURA ELECTRÓNICA
+F002-00001037
+Fecha Emisión: 01/09/2026
+Señor(es): COMERCIAL DEMO LIMA S.A.C.
+RUC: 20601234565
+Moneda: SOLES
+Cant.  Descripción
+5  Tóner HP 85A  S/ 1,095.00
+Valor de venta: S/ 1,095.00
+IGV: S/ 197.10
+Total a pagar: S/ 1,292.10
+Representación impresa de la factura electrónica. Documento ficticio.
