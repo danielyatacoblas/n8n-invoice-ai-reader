@@ -1,0 +1,579 @@
+{
+  "id": "facturasprod",
+  "name": "Lectura de facturas · producción",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "has:attachment filename:pdf"
+        },
+        "options": {
+          "downloadAttachments": true
+        }
+      },
+      "id": "gm-in",
+      "name": "Gmail · Factura recibida",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ],
+      "notes": "Conviene usar una casilla o etiqueta solo para facturas (por ejemplo facturas@empresa.pe)."
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "attachment_0",
+        "options": {}
+      },
+      "id": "pdf-1",
+      "name": "Extraer texto del PDF",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "REEMPLAZAR_ID_HOJA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Facturas",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "gs-leer",
+      "name": "Sheets · Leer facturas",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        480,
+        300
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "notes": "Solo para saber qué facturas ya están registradas."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nodos Code de n8n: \"Leer y validar factura\" y \"Validar lectura de la IA\".\n// Espejo en JavaScript de src/facturas.py (misma lógica, misma salida).\n// La paridad entre ambos la verifica tests/test_paridad_js.py.\n//\n// El mismo archivo genera los dos nodos. scripts/build_workflow.py fija:\n//   MODO      'texto' → lee el texto del PDF;  'ia' → valida lo que leyó el modelo\n//   REGISTRO  'memoria' (demo) o 'sheets' (producción) para detectar duplicados\n\nconst MODO = 'texto';\nconst REGISTRO = 'sheets';\n\nconst RUC_EMPRESA = '20601234565';\nconst TASA_IGV = 18;\nconst TOLERANCIA = 1;\nconst FACTORES_RUC = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2];\nconst CAMPOS = ['ruc_emisor', 'serie', 'numero', 'fecha', 'moneda', 'base', 'igv', 'total'];\n\nconst ETIQUETAS = {\n  base: ['op. gravada', 'op gravada', 'operacion gravada', 'valor de venta',\n    'sub total', 'subtotal'],\n  igv: ['igv', 'i.g.v.'],\n  total: ['importe total', 'total a pagar', 'total'],\n};\nconst MONTO = '(?:s/|us\\\\$|\\\\$|pen|usd)?\\\\s*(\\\\d[\\\\d,]*(?:\\\\.\\\\d{1,2})?)';\n\n// ── utilidades ──\n\nconst plano = (texto) =>\n  (texto || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();\n\nconst escaparRegex = (s) => s.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n\nfunction aCentimos(valor) {\n  if (valor === null || valor === undefined) return null;\n  const t = String(valor).trim().replace(/,/g, '');\n  let m = t.match(/^(\\d+)(?:\\.(\\d{1,2}))?$/);\n  if (!m) {\n    m = t.match(/^(\\d+)\\.(\\d+)$/);         // 1180.004 de un modelo de IA\n    if (!m) return null;\n  }\n  const decimales = (m[2] || '').padEnd(2, '0').slice(0, 2);\n  return parseInt(m[1], 10) * 100 + parseInt(decimales, 10);\n}\n\nfunction rucValido(ruc) {\n  if (!/^\\d{11}$/.test(ruc || '') || !['10', '15', '17', '20'].includes(ruc.slice(0, 2))) {\n    return false;\n  }\n  let suma = 0;\n  for (let i = 0; i < 10; i++) suma += Number(ruc[i]) * FACTORES_RUC[i];\n  const resto = 11 - (suma % 11);\n  const verificador = resto === 10 ? 0 : resto === 11 ? 1 : resto;\n  return Number(ruc[10]) === verificador;\n}\n\nfunction fechaIso(texto) {\n  const t = (texto || '').trim();\n  let d, mes, a;\n  let m = t.match(/^(\\d{1,2})[/.-](\\d{1,2})[/.-](\\d{4})$/);\n  if (m) {\n    [d, mes, a] = [Number(m[1]), Number(m[2]), Number(m[3])];\n  } else {\n    m = t.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);\n    if (!m) return null;\n    [a, mes, d] = [Number(m[1]), Number(m[2]), Number(m[3])];\n  }\n  const f = new Date(Date.UTC(a, mes - 1, d));\n  if (a < 1 || f.getUTCFullYear() !== a || f.getUTCMonth() !== mes - 1 || f.getUTCDate() !== d) {\n    return null;\n  }\n  return String(a).padStart(4, '0') + '-' + String(mes).padStart(2, '0') + '-' +\n    String(d).padStart(2, '0');\n}\n\nfunction clave(f) {\n  if (!f.ruc_emisor || !f.serie || !f.numero) return '';\n  return f.ruc_emisor + '-' + f.serie + '-' + f.numero;\n}\n\n// ── lectura del texto del PDF ──\n\nfunction monto(textoPlano, etiquetas) {\n  for (const etiqueta of etiquetas) {\n    const patron = new RegExp('(?:^|\\\\n)[ \\\\t]*' + escaparRegex(etiqueta) +\n      '[^\\\\n\\\\d]*?(?:\\\\(\\\\s*18\\\\s*%\\\\s*\\\\))?[ \\\\t]*:?[ \\\\t]*' + MONTO);\n    const m = textoPlano.match(patron);\n    if (m) return aCentimos(m[1]);\n  }\n  return null;\n}\n\nfunction leerTexto(texto) {\n  const p = plano(texto);\n  const rucs = [...p.matchAll(/r\\.?\\s*u\\.?\\s*c\\.?[^\\d\\n]{0,6}(\\d{11})/g)].map((m) => m[1]);\n  const serie = p.match(/(?<![a-z0-9])([fe][a-z0-9]{3})\\s*-\\s*(\\d{1,8})(?![0-9])/);\n  const fecha = p.match(/fecha\\s*(?:de\\s*)?emision[^\\d\\n]*(\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{4}|\\d{4}-\\d{2}-\\d{2})/);\n  let moneda = null;\n  if (/dolar|us\\$|(?<![a-z])usd(?![a-z])/.test(p)) moneda = 'USD';\n  else if (/(?<![a-z])soles(?![a-z])|s\\/|(?<![a-z])pen(?![a-z])/.test(p)) moneda = 'PEN';\n  return {\n    ruc_emisor: rucs.length ? rucs[0] : null,\n    ruc_cliente: rucs.length > 1 ? rucs[1] : null,\n    serie: serie ? serie[1].toUpperCase() : null,\n    numero: serie ? serie[2].padStart(8, '0') : null,\n    fecha: fecha ? fechaIso(fecha[1]) : null,\n    moneda,\n    base: monto(p, ETIQUETAS.base),\n    igv: monto(p, ETIQUETAS.igv),\n    total: monto(p, ETIQUETAS.total),\n  };\n}\n\nfunction desdeIa(salida) {\n  const texto = (k) => {\n    const v = salida[k];\n    return (v === null || v === undefined || v === '') ? null : String(v).trim();\n  };\n  const moneda = (texto('moneda') || '').toUpperCase();\n  const numero = (texto('numero') || '').replace(/\\D/g, '');\n  const rucE = (texto('ruc_emisor') || '').replace(/\\D/g, '');\n  const rucC = (texto('ruc_cliente') || '').replace(/\\D/g, '');\n  return {\n    ruc_emisor: rucE || null,\n    ruc_cliente: rucC || null,\n    serie: (texto('serie') || '').toUpperCase() || null,\n    numero: numero ? numero.padStart(8, '0') : null,\n    fecha: fechaIso(texto('fecha') || ''),\n    moneda: ['PEN', 'USD'].includes(moneda) ? moneda : null,\n    base: aCentimos(texto('base')),\n    igv: aCentimos(texto('igv')),\n    total: aCentimos(texto('total')),\n  };\n}\n\n// ── validación ──\n\nfunction validar(f, hoy) {\n  const errores = [];\n  if (!rucValido(f.ruc_emisor)) errores.push('RUC del emisor inválido');\n  if (f.ruc_cliente && f.ruc_cliente !== RUC_EMPRESA) errores.push('factura emitida a otro RUC');\n  if (f.fecha > hoy) errores.push('fecha de emisión en el futuro');\n  const igvEsperado = Math.floor((f.base * TASA_IGV + 50) / 100);\n  if (Math.abs(f.igv - igvEsperado) > TOLERANCIA) errores.push('el IGV no es el 18 % de la base');\n  if (Math.abs(f.base + f.igv - f.total) > TOLERANCIA) errores.push('el total no es base + IGV');\n  return errores;\n}\n\nfunction procesar(f, registro, hoy, origen) {\n  const faltantes = CAMPOS.filter((c) => f[c] === null || f[c] === undefined || f[c] === '');\n  const resultado = { estado: '', origen, factura: f, clave: clave(f), faltantes, errores: [] };\n\n  if (faltantes.length) {\n    if (origen === 'texto') {\n      resultado.estado = 'faltan_datos';\n    } else {\n      resultado.estado = 'revision';\n      resultado.errores = ['faltan datos: ' + faltantes.join(', ')];\n    }\n    return resultado;\n  }\n\n  if (registro.includes(resultado.clave)) {\n    resultado.estado = 'duplicada';\n    return resultado;\n  }\n\n  const errores = validar(f, hoy);\n  resultado.errores = errores;\n  resultado.estado = errores.length ? 'revision' : 'registrada';\n  if (!errores.length) registro.push(resultado.clave);\n  return resultado;\n}\n\nfunction filaHoja(r) {\n  const f = r.factura;\n  const soles = (c) => (c === null || c === undefined) ? ''\n    : Math.floor(c / 100) + '.' + String(c % 100).padStart(2, '0');\n  return {\n    clave: r.clave, estado: r.estado,\n    ruc_emisor: f.ruc_emisor || '', serie: f.serie || '',\n    numero: f.numero || '', fecha: f.fecha || '',\n    moneda: f.moneda || '', base: soles(f.base),\n    igv: soles(f.igv), total: soles(f.total),\n    leida_por: r.origen, observaciones: r.errores.join('; '),\n  };\n}\n\n// ── Ejecución en n8n ──\n\nfunction leerRegistro() {\n  if (REGISTRO === 'sheets') {\n    // alwaysOutputData deja un item vacío cuando la hoja no tiene filas\n    return $('Sheets · Leer facturas').all().map((i) => String(i.json.clave || '')).filter(Boolean);\n  }\n  const memoria = $getWorkflowStaticData('global');\n  if (!Array.isArray(memoria.registro)) memoria.registro = [];\n  return memoria.registro;\n}\n\nconst registro = leerRegistro();\nconst hoy = $now.toISODate();\n\n// En modo texto se lee del nodo que extrajo el PDF (en producción, $input trae\n// las filas de la hoja). En modo IA, $input es la salida del extractor.\nif (MODO === 'texto') {\n  return $('Extraer texto del PDF').all().map((item) => {\n    const texto = String(item.json.text || '');\n    const r = procesar(leerTexto(texto), registro, hoy, 'texto');\n    return { json: Object.assign(r, { fila: filaHoja(r), texto }) };\n  });\n}\n\nreturn $input.all().map((item, i) => {\n  // Si falla el modelo (sin credencial, sin saldo, caído), n8n entrega el\n  // error por la salida normal del extractor, no por la de error. Sin esto la\n  // factura llegaría a revisión como \"faltan todos los datos\".\n  if (!item.json.output) {\n    const previo = $('Leer y validar factura').itemMatching(i).json;\n    const r = Object.assign({}, previo, {\n      estado: 'revision', origen: 'ia', errores: ['la IA no pudo leer la factura'],\n    });\n    return { json: Object.assign(r, { fila: filaHoja(r), texto: '' }) };\n  }\n  const r = procesar(desdeIa(item.json.output), registro, hoy, 'ia');\n  return { json: Object.assign(r, { fila: filaHoja(r), texto: '' }) };\n});\n"
+      },
+      "id": "code-1",
+      "name": "Leer y validar factura",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "e1",
+                    "leftValue": "={{ $json.estado }}",
+                    "rightValue": "registrada",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "registrada"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "e2",
+                    "leftValue": "={{ $json.estado }}",
+                    "rightValue": "revision",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "revision"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "e3",
+                    "leftValue": "={{ $json.estado }}",
+                    "rightValue": "duplicada",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "duplicada"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "e4",
+                    "leftValue": "={{ $json.estado }}",
+                    "rightValue": "faltan_datos",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "faltan_datos"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sw-1",
+      "name": "¿Resultado?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        960,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ JSON.stringify($json.fila) }}",
+        "options": {}
+      },
+      "id": "set-ok",
+      "name": "Fila · registrada",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "REEMPLAZAR_ID_HOJA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Facturas",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "gs-ok",
+      "name": "Sheets · Registrar factura",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ JSON.stringify($json.fila) }}",
+        "options": {}
+      },
+      "id": "set-rev",
+      "name": "Fila · revisión",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1200,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "REEMPLAZAR_ID_HOJA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Revision",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "gs-rev",
+      "name": "Sheets · Anotar para revisión",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1440,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "REEMPLAZAR_CORREO_CONTABILIDAD",
+        "subject": "=Factura para revisar: {{ $json.clave || 'sin identificar' }}",
+        "emailType": "text",
+        "message": "=Una factura recibida por correo no se registró.\n\nMotivo: {{ $json.errores.join('; ') }}\nProveedor (RUC): {{ $json.factura.ruc_emisor || '-' }}\nComprobante: {{ $json.factura.serie || '-' }}-{{ $json.factura.numero || '-' }}\nTotal leído: {{ $json.fila.total || '-' }} {{ $json.factura.moneda || '' }}\n\nEstá en la pestaña Revision de la hoja de facturas.",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "gm-rev",
+      "name": "Gmail · Avisar a contabilidad",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1440,
+        360
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "noop-dup",
+      "name": "Ya registrada · ignorar",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "text": "={{ $json.texto }}",
+        "schemaType": "fromAttributes",
+        "attributes": {
+          "attributes": [
+            {
+              "name": "ruc_emisor",
+              "type": "string",
+              "description": "RUC de 11 dígitos de quien EMITE la factura (el primero que aparece).",
+              "required": false
+            },
+            {
+              "name": "ruc_cliente",
+              "type": "string",
+              "description": "RUC de 11 dígitos del cliente, junto a 'Señor(es)'.",
+              "required": false
+            },
+            {
+              "name": "serie",
+              "type": "string",
+              "description": "Serie de la factura, 4 caracteres, por ejemplo F001.",
+              "required": false
+            },
+            {
+              "name": "numero",
+              "type": "string",
+              "description": "Número correlativo que va después de la serie y el guion.",
+              "required": false
+            },
+            {
+              "name": "fecha",
+              "type": "string",
+              "description": "Fecha de emisión en formato AAAA-MM-DD.",
+              "required": false
+            },
+            {
+              "name": "moneda",
+              "type": "string",
+              "description": "PEN si está en soles, USD si está en dólares.",
+              "required": false
+            },
+            {
+              "name": "base",
+              "type": "string",
+              "description": "Operación gravada o valor de venta, solo el número.",
+              "required": false
+            },
+            {
+              "name": "igv",
+              "type": "string",
+              "description": "Monto del IGV, solo el número.",
+              "required": false
+            },
+            {
+              "name": "total",
+              "type": "string",
+              "description": "Importe total a pagar, solo el número.",
+              "required": false
+            }
+          ]
+        },
+        "options": {
+          "systemPromptTemplate": "Lees facturas electrónicas peruanas. Copia cada dato tal como aparece en el texto. Si un dato no aparece, déjalo vacío: NO lo calcules ni lo deduzcas de otros montos. Una factura con datos inventados es peor que una factura que va a revisión manual."
+        }
+      },
+      "id": "ia-1",
+      "name": "IA · Leer factura",
+      "type": "@n8n/n8n-nodes-langchain.informationExtractor",
+      "typeVersion": 1.2,
+      "position": [
+        1200,
+        700
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "Solo se usa cuando el PDF no trae alguna etiqueta. Si la IA falla, la factura va a revisión manual. Lo que lee se vuelve a validar con las mismas reglas."
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list"
+        },
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "ia-m",
+      "name": "Modelo de IA",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1200,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nodos Code de n8n: \"Leer y validar factura\" y \"Validar lectura de la IA\".\n// Espejo en JavaScript de src/facturas.py (misma lógica, misma salida).\n// La paridad entre ambos la verifica tests/test_paridad_js.py.\n//\n// El mismo archivo genera los dos nodos. scripts/build_workflow.py fija:\n//   MODO      'texto' → lee el texto del PDF;  'ia' → valida lo que leyó el modelo\n//   REGISTRO  'memoria' (demo) o 'sheets' (producción) para detectar duplicados\n\nconst MODO = 'ia';\nconst REGISTRO = 'sheets';\n\nconst RUC_EMPRESA = '20601234565';\nconst TASA_IGV = 18;\nconst TOLERANCIA = 1;\nconst FACTORES_RUC = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2];\nconst CAMPOS = ['ruc_emisor', 'serie', 'numero', 'fecha', 'moneda', 'base', 'igv', 'total'];\n\nconst ETIQUETAS = {\n  base: ['op. gravada', 'op gravada', 'operacion gravada', 'valor de venta',\n    'sub total', 'subtotal'],\n  igv: ['igv', 'i.g.v.'],\n  total: ['importe total', 'total a pagar', 'total'],\n};\nconst MONTO = '(?:s/|us\\\\$|\\\\$|pen|usd)?\\\\s*(\\\\d[\\\\d,]*(?:\\\\.\\\\d{1,2})?)';\n\n// ── utilidades ──\n\nconst plano = (texto) =>\n  (texto || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();\n\nconst escaparRegex = (s) => s.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n\nfunction aCentimos(valor) {\n  if (valor === null || valor === undefined) return null;\n  const t = String(valor).trim().replace(/,/g, '');\n  let m = t.match(/^(\\d+)(?:\\.(\\d{1,2}))?$/);\n  if (!m) {\n    m = t.match(/^(\\d+)\\.(\\d+)$/);         // 1180.004 de un modelo de IA\n    if (!m) return null;\n  }\n  const decimales = (m[2] || '').padEnd(2, '0').slice(0, 2);\n  return parseInt(m[1], 10) * 100 + parseInt(decimales, 10);\n}\n\nfunction rucValido(ruc) {\n  if (!/^\\d{11}$/.test(ruc || '') || !['10', '15', '17', '20'].includes(ruc.slice(0, 2))) {\n    return false;\n  }\n  let suma = 0;\n  for (let i = 0; i < 10; i++) suma += Number(ruc[i]) * FACTORES_RUC[i];\n  const resto = 11 - (suma % 11);\n  const verificador = resto === 10 ? 0 : resto === 11 ? 1 : resto;\n  return Number(ruc[10]) === verificador;\n}\n\nfunction fechaIso(texto) {\n  const t = (texto || '').trim();\n  let d, mes, a;\n  let m = t.match(/^(\\d{1,2})[/.-](\\d{1,2})[/.-](\\d{4})$/);\n  if (m) {\n    [d, mes, a] = [Number(m[1]), Number(m[2]), Number(m[3])];\n  } else {\n    m = t.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);\n    if (!m) return null;\n    [a, mes, d] = [Number(m[1]), Number(m[2]), Number(m[3])];\n  }\n  const f = new Date(Date.UTC(a, mes - 1, d));\n  if (a < 1 || f.getUTCFullYear() !== a || f.getUTCMonth() !== mes - 1 || f.getUTCDate() !== d) {\n    return null;\n  }\n  return String(a).padStart(4, '0') + '-' + String(mes).padStart(2, '0') + '-' +\n    String(d).padStart(2, '0');\n}\n\nfunction clave(f) {\n  if (!f.ruc_emisor || !f.serie || !f.numero) return '';\n  return f.ruc_emisor + '-' + f.serie + '-' + f.numero;\n}\n\n// ── lectura del texto del PDF ──\n\nfunction monto(textoPlano, etiquetas) {\n  for (const etiqueta of etiquetas) {\n    const patron = new RegExp('(?:^|\\\\n)[ \\\\t]*' + escaparRegex(etiqueta) +\n      '[^\\\\n\\\\d]*?(?:\\\\(\\\\s*18\\\\s*%\\\\s*\\\\))?[ \\\\t]*:?[ \\\\t]*' + MONTO);\n    const m = textoPlano.match(patron);\n    if (m) return aCentimos(m[1]);\n  }\n  return null;\n}\n\nfunction leerTexto(texto) {\n  const p = plano(texto);\n  const rucs = [...p.matchAll(/r\\.?\\s*u\\.?\\s*c\\.?[^\\d\\n]{0,6}(\\d{11})/g)].map((m) => m[1]);\n  const serie = p.match(/(?<![a-z0-9])([fe][a-z0-9]{3})\\s*-\\s*(\\d{1,8})(?![0-9])/);\n  const fecha = p.match(/fecha\\s*(?:de\\s*)?emision[^\\d\\n]*(\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{4}|\\d{4}-\\d{2}-\\d{2})/);\n  let moneda = null;\n  if (/dolar|us\\$|(?<![a-z])usd(?![a-z])/.test(p)) moneda = 'USD';\n  else if (/(?<![a-z])soles(?![a-z])|s\\/|(?<![a-z])pen(?![a-z])/.test(p)) moneda = 'PEN';\n  return {\n    ruc_emisor: rucs.length ? rucs[0] : null,\n    ruc_cliente: rucs.length > 1 ? rucs[1] : null,\n    serie: serie ? serie[1].toUpperCase() : null,\n    numero: serie ? serie[2].padStart(8, '0') : null,\n    fecha: fecha ? fechaIso(fecha[1]) : null,\n    moneda,\n    base: monto(p, ETIQUETAS.base),\n    igv: monto(p, ETIQUETAS.igv),\n    total: monto(p, ETIQUETAS.total),\n  };\n}\n\nfunction desdeIa(salida) {\n  const texto = (k) => {\n    const v = salida[k];\n    return (v === null || v === undefined || v === '') ? null : String(v).trim();\n  };\n  const moneda = (texto('moneda') || '').toUpperCase();\n  const numero = (texto('numero') || '').replace(/\\D/g, '');\n  const rucE = (texto('ruc_emisor') || '').replace(/\\D/g, '');\n  const rucC = (texto('ruc_cliente') || '').replace(/\\D/g, '');\n  return {\n    ruc_emisor: rucE || null,\n    ruc_cliente: rucC || null,\n    serie: (texto('serie') || '').toUpperCase() || null,\n    numero: numero ? numero.padStart(8, '0') : null,\n    fecha: fechaIso(texto('fecha') || ''),\n    moneda: ['PEN', 'USD'].includes(moneda) ? moneda : null,\n    base: aCentimos(texto('base')),\n    igv: aCentimos(texto('igv')),\n    total: aCentimos(texto('total')),\n  };\n}\n\n// ── validación ──\n\nfunction validar(f, hoy) {\n  const errores = [];\n  if (!rucValido(f.ruc_emisor)) errores.push('RUC del emisor inválido');\n  if (f.ruc_cliente && f.ruc_cliente !== RUC_EMPRESA) errores.push('factura emitida a otro RUC');\n  if (f.fecha > hoy) errores.push('fecha de emisión en el futuro');\n  const igvEsperado = Math.floor((f.base * TASA_IGV + 50) / 100);\n  if (Math.abs(f.igv - igvEsperado) > TOLERANCIA) errores.push('el IGV no es el 18 % de la base');\n  if (Math.abs(f.base + f.igv - f.total) > TOLERANCIA) errores.push('el total no es base + IGV');\n  return errores;\n}\n\nfunction procesar(f, registro, hoy, origen) {\n  const faltantes = CAMPOS.filter((c) => f[c] === null || f[c] === undefined || f[c] === '');\n  const resultado = { estado: '', origen, factura: f, clave: clave(f), faltantes, errores: [] };\n\n  if (faltantes.length) {\n    if (origen === 'texto') {\n      resultado.estado = 'faltan_datos';\n    } else {\n      resultado.estado = 'revision';\n      resultado.errores = ['faltan datos: ' + faltantes.join(', ')];\n    }\n    return resultado;\n  }\n\n  if (registro.includes(resultado.clave)) {\n    resultado.estado = 'duplicada';\n    return resultado;\n  }\n\n  const errores = validar(f, hoy);\n  resultado.errores = errores;\n  resultado.estado = errores.length ? 'revision' : 'registrada';\n  if (!errores.length) registro.push(resultado.clave);\n  return resultado;\n}\n\nfunction filaHoja(r) {\n  const f = r.factura;\n  const soles = (c) => (c === null || c === undefined) ? ''\n    : Math.floor(c / 100) + '.' + String(c % 100).padStart(2, '0');\n  return {\n    clave: r.clave, estado: r.estado,\n    ruc_emisor: f.ruc_emisor || '', serie: f.serie || '',\n    numero: f.numero || '', fecha: f.fecha || '',\n    moneda: f.moneda || '', base: soles(f.base),\n    igv: soles(f.igv), total: soles(f.total),\n    leida_por: r.origen, observaciones: r.errores.join('; '),\n  };\n}\n\n// ── Ejecución en n8n ──\n\nfunction leerRegistro() {\n  if (REGISTRO === 'sheets') {\n    // alwaysOutputData deja un item vacío cuando la hoja no tiene filas\n    return $('Sheets · Leer facturas').all().map((i) => String(i.json.clave || '')).filter(Boolean);\n  }\n  const memoria = $getWorkflowStaticData('global');\n  if (!Array.isArray(memoria.registro)) memoria.registro = [];\n  return memoria.registro;\n}\n\nconst registro = leerRegistro();\nconst hoy = $now.toISODate();\n\n// En modo texto se lee del nodo que extrajo el PDF (en producción, $input trae\n// las filas de la hoja). En modo IA, $input es la salida del extractor.\nif (MODO === 'texto') {\n  return $('Extraer texto del PDF').all().map((item) => {\n    const texto = String(item.json.text || '');\n    const r = procesar(leerTexto(texto), registro, hoy, 'texto');\n    return { json: Object.assign(r, { fila: filaHoja(r), texto }) };\n  });\n}\n\nreturn $input.all().map((item, i) => {\n  // Si falla el modelo (sin credencial, sin saldo, caído), n8n entrega el\n  // error por la salida normal del extractor, no por la de error. Sin esto la\n  // factura llegaría a revisión como \"faltan todos los datos\".\n  if (!item.json.output) {\n    const previo = $('Leer y validar factura').itemMatching(i).json;\n    const r = Object.assign({}, previo, {\n      estado: 'revision', origen: 'ia', errores: ['la IA no pudo leer la factura'],\n    });\n    return { json: Object.assign(r, { fila: filaHoja(r), texto: '' }) };\n  }\n  const r = procesar(desdeIa(item.json.output), registro, hoy, 'ia');\n  return { json: Object.assign(r, { fila: filaHoja(r), texto: '' }) };\n});\n"
+      },
+      "id": "code-2",
+      "name": "Validar lectura de la IA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        700
+      ]
+    }
+  ],
+  "connections": {
+    "Gmail · Factura recibida": {
+      "main": [
+        [
+          {
+            "node": "Extraer texto del PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer texto del PDF": {
+      "main": [
+        [
+          {
+            "node": "Sheets · Leer facturas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets · Leer facturas": {
+      "main": [
+        [
+          {
+            "node": "Leer y validar factura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer y validar factura": {
+      "main": [
+        [
+          {
+            "node": "¿Resultado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Resultado?": {
+      "main": [
+        [
+          {
+            "node": "Fila · registrada",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fila · revisión",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Gmail · Avisar a contabilidad",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ya registrada · ignorar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IA · Leer factura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fila · registrada": {
+      "main": [
+        [
+          {
+            "node": "Sheets · Registrar factura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fila · revisión": {
+      "main": [
+        [
+          {
+            "node": "Sheets · Anotar para revisión",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IA · Leer factura": {
+      "main": [
+        [
+          {
+            "node": "Validar lectura de la IA",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validar lectura de la IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modelo de IA": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "IA · Leer factura",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar lectura de la IA": {
+      "main": [
+        [
+          {
+            "node": "¿Resultado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "facturas-prod"
+  },
+  "tags": []
+}
