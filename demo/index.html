@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lectura de facturas · demo</title>
+<style>
+  :root {
+    --bg: #f0f2f5; --panel: #fff; --texto: #1c2530; --suave: #65717e; --borde: #d8dde3;
+    --acento: #2f6fed; --ok: #1f8a4c; --ok-bg: #e3f4ea; --rev: #b4561b; --rev-bg: #fbeee2;
+    --dup: #6b7480; --dup-bg: #eceff2; --ia: #6a45c9; --ia-bg: #efe9fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10151b; --panel: #19212a; --texto: #e5eaef; --suave: #97a3af; --borde: #2a3440;
+      --acento: #4b85f5; --ok: #4cc07f; --ok-bg: #173325; --rev: #f0934f; --rev-bg: #3a2718;
+      --dup: #a3adb8; --dup-bg: #252e38; --ia: #a98cf2; --ia-bg: #2a2340;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--texto); }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px; display: grid; gap: 18px; }
+  section { background: var(--panel); border: 1px solid var(--borde); border-radius: 12px; padding: 18px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { margin: 0; color: var(--suave); }
+  .fila { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; margin-top: 14px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--suave); flex: 1; min-width: 240px; }
+  input { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--borde);
+          border-radius: 8px; padding: 9px 11px; }
+  #zona { margin-top: 14px; border: 2px dashed var(--borde); border-radius: 12px; padding: 34px 16px;
+          text-align: center; color: var(--suave); cursor: pointer; }
+  #zona.encima { border-color: var(--acento); color: var(--acento); }
+  .resultado { display: grid; gap: 10px; }
+  .cab { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .cab b { font-size: 16px; }
+  .estado { font-weight: 600; font-size: 13px; padding: 3px 10px; border-radius: 99px; }
+  .registrada { color: var(--ok); background: var(--ok-bg); }
+  .revision { color: var(--rev); background: var(--rev-bg); }
+  .duplicada { color: var(--dup); background: var(--dup-bg); }
+  .faltan_datos { color: var(--ia); background: var(--ia-bg); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td { padding: 5px 8px; border-top: 1px solid var(--borde); }
+  td:first-child { color: var(--suave); width: 150px; }
+  .vacio { color: var(--rev); }
+  ul { margin: 0; padding-left: 20px; color: var(--rev); }
+  .error { color: var(--rev); }
+</style>
+</head>
+<body>
+<main>
+  <section>
+    <h1>Lectura de facturas con n8n</h1>
+    <p>Arrastra una factura PDF (hay 32 de ejemplo en <code>data/facturas/</code>). n8n extrae el
+       texto, lee los datos y decide si se registra, va a revisión o ya estaba registrada.</p>
+    <div class="fila">
+      <label>URL del webhook de n8n
+        <input id="url" value="http://localhost:5678/webhook/factura-demo">
+      </label>
+    </div>
+    <div id="zona">Suelta aquí uno o varios PDF, o haz clic para elegirlos
+      <input id="archivo" type="file" accept="application/pdf" multiple hidden>
+    </div>
+  </section>
+  <div id="resultados" class="resultado"></div>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const ETIQUETAS = { registrada: 'Registrada', revision: 'A revisión',
+                      duplicada: 'Ya estaba registrada', faltan_datos: 'La lee la IA (en producción)' };
+  const NOMBRES = { ruc_emisor: 'RUC emisor', serie: 'Serie', numero: 'Número', fecha: 'Fecha',
+                    moneda: 'Moneda', base: 'Base imponible', igv: 'IGV', total: 'Total' };
+
+  function el(tag, props = {}, ...hijos) {
+    const e = Object.assign(document.createElement(tag), props);
+    e.append(...hijos);
+    return e;
+  }
+
+  function tarjeta(nombre, r) {
+    const tabla = el('table');
+    for (const [campo, etiqueta] of Object.entries(NOMBRES)) {
+      const valor = ['base', 'igv', 'total'].includes(campo) ? r.fila[campo] : r.factura[campo];
+      tabla.append(el('tr', {}, el('td', { textContent: etiqueta }),
+        el('td', { textContent: valor || 'no encontrado', className: valor ? '' : 'vacio' })));
+    }
+    const s = el('section', {},
+      el('div', { className: 'cab' }, el('b', { textContent: nombre }),
+        el('span', { className: 'estado ' + r.estado, textContent: ETIQUETAS[r.estado] || r.estado })),
+      tabla);
+    if (r.errores.length) s.append(el('ul', {}, ...r.errores.map((e) => el('li', { textContent: e }))));
+    return s;
+  }
+
+  async function enviar(archivo) {
+    const datos = new FormData();
+    datos.append('factura', archivo);
+    try {
+      const res = await fetch($('url').value, { method: 'POST', body: datos });
+      if (!res.ok) throw new Error('n8n respondió ' + res.status +
+        (res.status === 404 ? ': ¿el workflow está activo?' : ''));
+      $('resultados').prepend(tarjeta(archivo.name, await res.json()));
+    } catch (e) {
+      $('resultados').prepend(el('section', {}, el('b', { textContent: archivo.name }),
+        el('p', { className: 'error', textContent: 'No se pudo procesar: ' + e.message })));
+    }
+  }
+
+  async function procesar(archivos) {
+    for (const a of archivos) await enviar(a);   // en orden, para ver los duplicados
+  }
+
+  const zona = $('zona');
+  zona.onclick = () => $('archivo').click();
+  $('archivo').onchange = (e) => procesar([...e.target.files]);
+  zona.ondragover = (e) => { e.preventDefault(); zona.classList.add('encima'); };
+  zona.ondragleave = () => zona.classList.remove('encima');
+  zona.ondrop = (e) => { e.preventDefault(); zona.classList.remove('encima'); procesar([...e.dataTransfer.files]); };
+</script>
+</body>
+</html>
