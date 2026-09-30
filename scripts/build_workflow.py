@@ -19,6 +19,8 @@ from pathlib import Path
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+from diseno_canvas import acomodar  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 JS = ROOT / "workflows" / "src" / "validar_factura.js"
 OUT = ROOT / "workflows"
@@ -91,6 +93,7 @@ def _append(nid, nombre, pestana, pos):
                   "options": {}})
 
 
+@acomodar
 def build_demo() -> dict:
     nodes = [
         _node("wh-1", "Webhook · Subir factura", "n8n-nodes-base.webhook", 2,
@@ -119,6 +122,7 @@ def build_demo() -> dict:
             "meta": {"instanceId": "facturas-demo"}, "tags": []}
 
 
+@acomodar
 def build_prod() -> dict:
     nodes = [
         _node("gm-in", "Gmail · Factura recibida", "n8n-nodes-base.gmailTrigger", 1.2,
