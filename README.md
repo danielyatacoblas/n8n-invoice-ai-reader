@@ -170,6 +170,82 @@ integración, y una rama por cambio. Los merges son `--no-ff` para que cada
 funcionalidad quede como un bloque legible en el historial, y cada versión
 lleva su tag.
 
+```mermaid
+gitGraph
+   commit id: "chore: set up the repository"
+   branch develop
+   checkout develop
+   branch feature/lectura-facturas
+   checkout feature/lectura-facturas
+   commit id: "feat: read Peruvian e-invoice fields from the..."
+   commit id: "test: cover reading, SUNAT rules and every de..."
+   checkout develop
+   merge feature/lectura-facturas
+   branch feature/facturas-de-prueba
+   checkout feature/facturas-de-prueba
+   commit id: "feat: generate 32 fictitious invoice PDFs wit..."
+   commit id: "feat: evaluate field reading and decisions ag..."
+   commit id: "test: every generated invoice must produce it..."
+   checkout develop
+   merge feature/facturas-de-prueba
+   branch feature/nodos-n8n
+   checkout feature/nodos-n8n
+   commit id: "feat: port reading and validation to the n8n ..."
+   commit id: "test: run the n8n nodes outside n8n and compa..."
+   checkout develop
+   merge feature/nodos-n8n
+   branch feature/workflows
+   checkout feature/workflows
+   commit id: "feat: build the demo and production workflows"
+   commit id: "test: check the workflows import cleanly and ..."
+   checkout develop
+   merge feature/workflows
+   branch feature/demo-web
+   checkout feature/demo-web
+   commit id: "feat: add a page to drop PDFs on the demo web..."
+   commit id: "docs: add a screenshot of two invoices proces..."
+   checkout develop
+   merge feature/demo-web
+   branch chore/ci
+   checkout chore/ci
+   commit id: "chore: run tests and the invoice evaluation o..."
+   checkout develop
+   merge chore/ci
+   branch docs/documentacion
+   checkout docs/documentacion
+   commit id: "docs: explain the problem, the rules and wher..."
+   commit id: "docs: add the production guide and known limits"
+   checkout develop
+   merge docs/documentacion
+   branch release/v1.0.0
+   checkout release/v1.0.0
+   commit id: "chore(release): prepare v1.0.0"
+   checkout main
+   merge release/v1.0.0 tag: "v1.0.0"
+   checkout develop
+   merge release/v1.0.0
+   branch docs/imagenes-readme
+   checkout docs/imagenes-readme
+   commit id: "docs: add architecture and test result images..."
+   checkout develop
+   merge docs/imagenes-readme
+   branch release/v1.1.0
+   checkout release/v1.1.0
+   commit id: "chore(release): prepare v1.1.0"
+   checkout main
+   merge release/v1.1.0 tag: "v1.1.0"
+   checkout develop
+   merge release/v1.1.0
+   branch feature/diagrama-git
+   checkout feature/diagrama-git
+   commit id: "feat: draw the Git Flow history as a Mermaid ..."
+   checkout develop
+   merge feature/diagrama-git
+```
+
+<p align="center"><i>Historial real del repositorio hasta v1.1.0, generado con
+<code>python scripts/diagrama_git.py</code>.</i></p>
+
 | Rama | Para qué |
 | --- | --- |
 | `main` | Solo versiones liberadas. Cada merge lleva su tag. |
