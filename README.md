@@ -40,6 +40,80 @@ flowchart TD
 
 ---
 
+## El workflow en n8n
+
+<p align="center"><img src="docs/workflow_n8n.png" alt="Workflow de producción abierto en el editor de n8n" width="900"></p>
+
+<p align="center"><i>Captura del editor de n8n 2.40 con <code>workflows/facturas_produccion.json</code> importado.
+Los triángulos rojos solo indican credenciales por conectar (Google, Telegram, IA).</i></p>
+
+### Paso a paso: una factura con una etiqueta faltante: el texto no alcanza y entra la IA
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant G as Gmail Trigger
+    participant X as Extract from File
+    participant H as Sheets · Leer facturas
+    participant L as Code · Leer y validar
+    participant IA as Information Extractor
+    participant V as Code · Validar lectura de la IA
+    participant R as Sheets / Gmail
+    G->>X: correo con factura.pdf
+    X->>H: texto del PDF
+    H->>L: facturas ya registradas (Execute Once)
+    L->>L: RUC, serie, fecha, montos por etiquetas
+    L-->>IA: falta el IGV → estado faltan_datos
+    IA->>V: campos leídos por el modelo (sin calcular nada)
+    V->>V: dígito del RUC, IGV = 18 %, total = base + IGV, ¿duplicada?
+    alt todo cuadra
+        V->>R: pestaña Facturas
+    else algo no cuadra o la IA falló
+        V->>R: pestaña Revisión + correo a contabilidad con el motivo
+    end
+```
+
+### Técnicas de n8n que usa
+
+**Lectura de facturas · producción** · 14 nodos
+
+| Técnica de n8n | Para qué se usa aquí |
+| --- | --- |
+| Disparo por eventos (webhook o trigger de la app) | reacciona al instante, sin revisar cada tanto |
+| Extract from File | lee PDFs o archivos de texto dentro del flujo |
+| Execute Once | lee una hoja completa una sola vez aunque lleguen varios items |
+| Always Output Data | una hoja vacía no corta el flujo |
+| Lectura de otros nodos por nombre ($('Nodo')) | usa datos de pasos anteriores aunque $input traiga otra cosa |
+| Switch con salidas con nombre | cada decisión tiene su rama legible en el canvas |
+| Salida de error del nodo (On Error → error output) | si un servicio falla, el flujo sigue por otra rama |
+| Nodos de IA de n8n (LangChain) | la IA es un paso del flujo, con su modelo conectado aparte |
+| Modelo de IA como sub-nodo intercambiable | se cambia de proveedor sin tocar el resto del flujo |
+
+<details><summary>Nodo por nodo</summary>
+
+| Nodo | Tipo | Configuración |
+| --- | --- | --- |
+| Gmail · Factura recibida | Gmail Trigger | Conviene usar una casilla o etiqueta solo para facturas (por ejemplo facturas@empresa.pe). |
+| Extraer texto del PDF | Extract from File | operación `pdf` |
+| Sheets · Leer facturas | Google Sheets | pestaña `Facturas`, Execute Once, Always Output Data. Solo para saber qué facturas ya están registradas. |
+| Leer y validar factura | Code (JavaScript) | 226 líneas generadas desde `workflows/src/` |
+| ¿Resultado? | Switch | — |
+| Fila · registrada | Edit Fields (Set) | — |
+| Sheets · Registrar factura | Google Sheets | operación `append`, pestaña `Facturas` |
+| Fila · revisión | Edit Fields (Set) | — |
+| Sheets · Anotar para revisión | Google Sheets | operación `append`, pestaña `Revision` |
+| Gmail · Avisar a contabilidad | Gmail | — |
+| Ya registrada · ignorar | No Operation | — |
+| IA · Leer factura | Information Extractor | salida de error. Solo se usa cuando el PDF no trae alguna etiqueta. Si la IA falla, la factura va a revisión manual. Lo que lee se vuelve a validar con las mismas reglas. |
+| Modelo de IA | OpenAI Chat Model | — |
+| Validar lectura de la IA | Code (JavaScript) | 226 líneas generadas desde `workflows/src/` |
+
+</details>
+
+<sub>Tablas generadas del JSON del workflow con <code>python scripts/documentar_workflow.py workflows/facturas_produccion.json</code>.</sub>
+
+---
+
 ## Demo
 
 <!-- VIDEO: arrastra aquí el .mp4 al editar el README en GitHub y deja solo la URL que genera. -->
@@ -241,9 +315,31 @@ gitGraph
    commit id: "feat: draw the Git Flow history as a Mermaid ..."
    checkout develop
    merge feature/diagrama-git
+   branch docs/diagrama-git-flow
+   checkout docs/diagrama-git-flow
+   commit id: "docs: show the branch history as a gitGraph i..."
+   checkout develop
+   merge docs/diagrama-git-flow
+   branch release/v1.1.1
+   checkout release/v1.1.1
+   commit id: "chore(release): prepare v1.1.1"
+   checkout main
+   merge release/v1.1.1 tag: "v1.1.1"
+   checkout develop
+   merge release/v1.1.1
+   branch feature/canvas-ordenado
+   checkout feature/canvas-ordenado
+   commit id: "feat: lay out the canvas from the workflow co..."
+   checkout develop
+   merge feature/canvas-ordenado
+   branch feature/documentar-workflow
+   checkout feature/documentar-workflow
+   commit id: "feat: document the n8n techniques each workfl..."
+   checkout develop
+   merge feature/documentar-workflow
 ```
 
-<p align="center"><i>Historial real del repositorio hasta v1.1.0, generado con
+<p align="center"><i>Historial real del repositorio, generado con
 <code>python scripts/diagrama_git.py</code>.</i></p>
 
 | Rama | Para qué |
